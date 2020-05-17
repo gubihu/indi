@@ -31,7 +31,6 @@
 
 #include "fpack/fpack.h"
 #include "indicom.h"
-#include "stream/streammanager.h"
 #include "locale_compat.h"
 
 #include <fitsio.h>
@@ -41,6 +40,7 @@
 #include <libnova/airmass.h>
 #include <libnova/transform.h>
 #include <libnova/ln_types.h>
+#include <libastro.h>
 
 #include <cmath>
 #include <regex>
@@ -142,16 +142,8 @@ void CCD::SetCCDCapability(uint32_t cap)
     else
         setDriverInterface(getDriverInterface() & ~GUIDER_INTERFACE);
 
-    if (HasStreaming() && Streamer.get() == nullptr)
-    {
-        Streamer.reset(new StreamManager(this));
-        Streamer->initProperties();
-    }
-
-    if (HasDSP() && DSP.get() == nullptr)
-    {
-        DSP.reset(new DSP::Manager(this));
-    }
+    HasStreaming();
+    HasDSP();
 }
 
 bool CCD::initProperties()
@@ -949,7 +941,8 @@ bool CCD::ISNewNumber(const char * dev, const char * name, double values[], char
                     epochPos.dec = Dec;
 
                     // Convert from JNow to J2000
-                    ln_get_equ_prec2(&epochPos, ln_get_julian_from_sys(), JD2000, &J2000Pos);
+                    //ln_get_equ_prec2(&epochPos, ln_get_julian_from_sys(), JD2000, &J2000Pos);
+                    LibAstro::ObservedToJ2000(&epochPos, ln_get_julian_from_sys(), &J2000Pos);
 
                     J2000RA = J2000Pos.ra / 15.0;
                     J2000DE = J2000Pos.dec;
@@ -1980,7 +1973,7 @@ bool CCD::ExposureCompletePrivate(CCDChip * targetChip)
     {
         uint8_t* buf = static_cast<uint8_t*>(malloc(targetChip->getFrameBufferSize()));
         memcpy(buf, targetChip->getFrameBuffer(), targetChip->getFrameBufferSize());
-        DSP->processBLOB(buf, 2, new int[2] { targetChip->getSubW() / targetChip->getBinX(), targetChip->getSubH() / targetChip->getBinY() },
+        DSP->processBLOB(buf, 2, new int[2] { targetChip->getXRes() / targetChip->getBinX(), targetChip->getYRes() / targetChip->getBinY() },
                          targetChip->getBPP());
         free(buf);
     }
@@ -2937,7 +2930,7 @@ bool CCD::saveConfigItems(FILE * fp)
         IUSaveConfigNumber(fp, &GuideCCD.ImageBinNP);
     }
 
-    if (CanSubFrame())
+    if (CanSubFrame() && PrimaryCCD.ImageFrameN[2].value > 0)
         IUSaveConfigNumber(fp, &PrimaryCCD.ImageFrameNP);
 
     if (CanBin())
