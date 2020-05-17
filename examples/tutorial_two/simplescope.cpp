@@ -22,9 +22,18 @@
 #include "simplescope.h"
 
 #include "indicom.h"
+#include "indistandardproperty.h"
+
+#include <libnova/transform.h>
+#include <libnova/precession.h>
+// libnova specifies round() on old systems and it collides with the new gcc 5.x/6.x headers
+#define HAVE_ROUND
+#include <libnova/utility.h>
 
 #include <cmath>
 #include <memory>
+#include <cstring>
+#include <assert.h>
 
 static std::unique_ptr<SimpleScope> simpleScope(new SimpleScope());
 
@@ -93,15 +102,71 @@ bool SimpleScope::initProperties()
 
     // Add Debug control so end user can turn debugging/loggin on and off
     addDebugControl();
+    addSimulationControl();
+
+    IUFillSwitch(&GotoModeS[0], "ALTAZ", "Alt/Az", ISS_OFF);
+    IUFillSwitch(&GotoModeS[1], "RADEC", "Ra/Dec", ISS_ON);
+    IUFillSwitchVector(&GotoModeSP, GotoModeS, NARRAY(GotoModeS), getDeviceName(), "GOTOMODE", "Goto mode",
+                       "Options", IP_RW, ISR_1OFMANY, 0, IPS_IDLE);
+    registerProperty(&GotoModeSP, INDI_SWITCH);
 
     // Enable simulation mode so that serial connection in INDI::Telescope does not try
     // to attempt to perform a physical connection to the serial port.
     setSimulation(true);
 
     // Set telescope capabilities. 0 is for the the number of slew rates that we support. We have none for this simple driver.
-    SetTelescopeCapability(TELESCOPE_CAN_GOTO | TELESCOPE_CAN_ABORT, 0);
+    SetTelescopeCapability(TELESCOPE_CAN_GOTO | TELESCOPE_CAN_ABORT | TELESCOPE_HAS_TIME | TELESCOPE_HAS_LOCATION, 0);
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    /// Horizontal Coords
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    IUFillNumber(&HorizontalCoordsN[AXIS_AZ], "AZ", "Az D:M:S", "%10.6m", 0.0, 360.0, 0.0, 0);
+    IUFillNumber(&HorizontalCoordsN[AXIS_ALT], "ALT", "Alt  D:M:S", "%10.6m", -90., 90.0, 0.0, 0);
+    IUFillNumberVector(&HorizontalCoordsNP, HorizontalCoordsN, 2, getDeviceName(), "HORIZONTAL_COORD",
+                       "Horizontal Coord", MAIN_CONTROL_TAB, IP_RW, 0, IPS_IDLE);
 
     return true;
+}
+
+bool SimpleScope::updateProperties()
+{
+    INDI::Telescope::updateProperties();
+
+    if (isConnected())
+    {
+
+        defineNumber(&HorizontalCoordsNP);
+    }
+    else
+    {
+        deleteProperty(HorizontalCoordsNP.name);
+    }
+
+    return true;
+}
+
+bool SimpleScope::ISNewSwitch(const char *dev, const char *name, ISState *states, char *names[], int n)
+{
+    if (dev && !strcmp(dev, getDeviceName())) {
+        ISwitchVectorProperty *svp = getSwitch(name);
+
+        if (!strcmp(svp->name, GotoModeSP.name))
+        {
+            IUUpdateSwitch(svp, states, names, n);
+            ISwitch *sp = IUFindOnSwitch(svp);
+
+            assert(sp != nullptr);
+
+            if (!strcmp(sp->name, GotoModeS[0].name))
+                SetAltAzMode(true);
+            else
+                SetAltAzMode(false);
+            return true;
+        }
+
+    }
+
+    return INDI::Telescope::ISNewSwitch(dev, name, states, names, n);
 }
 
 /**************************************************************************************
@@ -145,6 +210,60 @@ bool SimpleScope::Goto(double ra, double dec)
     return true;
 }
 
+bool SimpleScope::SetAltAzMode(bool enable)
+{
+    IUResetSwitch(&GotoModeSP);
+
+    if (enable)
+    {
+        ISwitch *sp = IUFindSwitch(&GotoModeSP, "ALTAZ");
+        if (sp)
+        {
+            LOG_INFO("Using AltAz goto.");
+            sp->s = ISS_ON;
+        }
+    }
+    else
+    {
+        ISwitch *sp = IUFindSwitch(&GotoModeSP, "RADEC");
+        if (sp)
+        {
+            sp->s = ISS_ON;
+            LOG_INFO("Using Ra/Dec goto.");
+        }
+    }
+
+    GotoModeSP.s = IPS_OK;
+    IDSetSwitch(&GotoModeSP, nullptr);
+    return true;
+}
+
+bool SimpleScope::MoveNS(INDI_DIR_NS dir, TelescopeMotionCommand command)
+{
+    INDI_UNUSED(dir);
+    INDI_UNUSED(command);
+    if (TrackState == SCOPE_PARKED)
+    {
+        LOG_ERROR("Please unpark the mount before issuing any motion commands.");
+        return false;
+    }
+
+    return true;
+}
+
+bool SimpleScope::MoveWE(INDI_DIR_WE dir, TelescopeMotionCommand command)
+{
+    INDI_UNUSED(dir);
+    INDI_UNUSED(command);
+    if (TrackState == SCOPE_PARKED)
+    {
+        LOG_ERROR("Please unpark the mount before issuing any motion commands.");
+        return false;
+    }
+
+    return true;
+}
+
 /**************************************************************************************
 ** Client is asking us to abort our motion
 ***************************************************************************************/
@@ -158,11 +277,71 @@ bool SimpleScope::Abort()
 ***************************************************************************************/
 bool SimpleScope::ReadScopeStatus()
 {
-    static struct timeval ltv { 0, 0 };
-    struct timeval tv { 0, 0 };
+
+    /* Process per current state. We check the state of EQUATORIAL_EOD_COORDS_REQUEST and act acoordingly */
+    switch (TrackState)
+    {
+        case SCOPE_SLEWING:
+            break;
+
+        default:
+            break;
+    }
+
+    char RAStr[64]={0}, DecStr[64]={0};
+
+    // Parse the RA/DEC into strings
+    fs_sexa(RAStr, currentRA, 2, 3600);
+    fs_sexa(DecStr, currentDEC, 2, 3600);
+
+    DEBUGF(DBG_SCOPE, "Current RA: %s Current DEC: %s", RAStr, DecStr);
+
+    NewRaDec(currentRA, currentDEC);
+
+    char Axis1Coords[MAXINDINAME] = {0}, Axis2Coords[MAXINDINAME] = {0};
+//    double az  = 10; //static_cast<double>(n1) / 0x100000000 * 360.0;
+//    double al  = 20; //static_cast<double>(n2) / 0x100000000 * 360.0;
+    ln_equ_posn epochPos { 0, 0 };
+
+    epochPos.ra  = currentRA * 15.0;
+    epochPos.dec = currentDEC;
+
+    struct ln_lnlat_posn lnobserver;
+    struct ln_hrz_posn lnaltaz;
+
+    lnobserver.lng = LocationN[LOCATION_LONGITUDE].value;
+    if (lnobserver.lng > 180)
+        lnobserver.lng -= 360;
+    lnobserver.lat = LocationN[LOCATION_LATITUDE].value;
+    ln_get_hrz_from_equ(&epochPos, &lnobserver, ln_get_julian_from_sys(), &lnaltaz);
+    /* libnova measures azimuth from south towards west */
+    double az = range360(lnaltaz.az + 180);
+    double al = lnaltaz.alt;
+
+    HorizontalCoordsN[AXIS_AZ].value = az;
+    HorizontalCoordsN[AXIS_ALT].value = al;
+
+    memset(Axis1Coords, 0, MAXINDINAME);
+    memset(Axis2Coords, 0, MAXINDINAME);
+    fs_sexa(Axis1Coords, az, 2, 3600);
+    fs_sexa(Axis2Coords, al, 2, 3600);
+    LOGF_DEBUG("AZ <%s> ALT <%s>; TrackState: %d", Axis1Coords, Axis2Coords, TrackState);
+
+    IDSetNumber(&HorizontalCoordsNP, nullptr);
+
+    return true;
+}
+
+void SimpleScope::TimerHit()
+{
+    static bool Slewing  = false;
+    static bool Tracking = false;
     double dt = 0, da_ra = 0, da_dec = 0, dx = 0, dy = 0;
     int nlocked;
+    static struct timeval ltv { 0, 0 };
+    struct timeval tv { 0, 0 };
 
+    // By default this method is called every POLLMS milliseconds
     /* update elapsed time since last poll, don't presume exactly POLLMS */
     gettimeofday(&tv, nullptr);
 
@@ -176,7 +355,11 @@ bool SimpleScope::ReadScopeStatus()
     da_ra  = SLEW_RATE * dt;
     da_dec = SLEW_RATE * dt;
 
-    /* Process per current state. We check the state of EQUATORIAL_EOD_COORDS_REQUEST and act acoordingly */
+
+    // Call the base class handler
+    // This normally just calls ReadScopeStatus
+    INDI::Telescope::TimerHit();
+
     switch (TrackState)
     {
         case SCOPE_SLEWING:
@@ -223,20 +406,34 @@ bool SimpleScope::ReadScopeStatus()
 
                 LOG_INFO("Telescope slew is complete. Tracking...");
             }
-            break;
+            if (!Slewing)
+            {
+                LOG_INFO("Slewing started");
+            }
+            Tracking        = false;
+            Slewing         = true;
+        break;
 
-        default:
-            break;
+    case SCOPE_TRACKING:
+        if (!Tracking)
+        {
+            LOG_INFO("Tracking started");
+        }
+        Tracking = true;
+        Slewing  = false;
+        break;
+
+    default:
+        if (Slewing)
+        {
+            LOG_INFO("Slewing stopped");
+        }
+        if (Tracking)
+        {
+            LOG_INFO("Tracking stopped");
+        }
+        Tracking        = false;
+        Slewing         = false;
+        break;
     }
-
-    char RAStr[64]={0}, DecStr[64]={0};
-
-    // Parse the RA/DEC into strings
-    fs_sexa(RAStr, currentRA, 2, 3600);
-    fs_sexa(DecStr, currentDEC, 2, 3600);
-
-    DEBUGF(DBG_SCOPE, "Current RA: %s Current DEC: %s", RAStr, DecStr);
-
-    NewRaDec(currentRA, currentDEC);
-    return true;
 }
