@@ -116,6 +116,7 @@ bool SkywatcherAPIMount::Handshake()
 {
     DEBUG(DBG_SCOPE, "SkywatcherAPIMount::Handshake");
     SetSerialPort(PortFD);
+    tty_set_debug(true);
 
     bool Result = InitMount(RecoverAfterReconnection);
 
