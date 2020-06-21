@@ -173,3 +173,14 @@ add_executable(indi_skywatcherAltAzSimple ${skywatcherAltAzSimple_SRCS})
 target_link_libraries(indi_skywatcherAltAzSimple indidriver)
 
 install(TARGETS indi_skywatcherAltAzSimple RUNTIME DESTINATION bin)
+
+#########################################################
+########### Alt-Az Simple Mount Simulator  ##############
+#########################################################
+set(AltAzMountSimulator_SRCS
+    ${CMAKE_SOURCE_DIR}/drivers/telescope/AltAzMountSimulator.cpp)
+
+add_executable(indi_AltAzMountSimulator ${AltAzMountSimulator_SRCS})
+target_link_libraries(indi_AltAzMountSimulator indidriver)
+
+install(TARGETS indi_AltAzMountSimulator RUNTIME DESTINATION bin)
