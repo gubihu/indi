@@ -553,7 +553,7 @@ bool SkywatcherAPI::SetGotoTargetOffset(AXISID Axis, long OffsetInMicrosteps)
 /// Func - 3 High speed slew mode
 bool SkywatcherAPI::SetMotionMode(AXISID Axis, char Func, char Direction)
 {
-    //    MYDEBUG(DBG_SCOPE, "SetMotionMode");
+    MYDEBUGF(DBG_SCOPE, "SetMotionMode %s Func: %c, Dir: %c",  Axis == AXIS1 ? "AXIS1" : "AXIS2", Func, Direction);
     std::string Parameters, Response;
 
     Parameters.push_back(Func);
@@ -564,7 +564,7 @@ bool SkywatcherAPI::SetMotionMode(AXISID Axis, char Func, char Direction)
 
 bool SkywatcherAPI::SetClockTicksPerMicrostep(AXISID Axis, long ClockTicksPerMicrostep)
 {
-    MYDEBUG(DBG_SCOPE, "SetClockTicksPerMicrostep");
+    MYDEBUGF(DBG_SCOPE, "SetClockTicksPerMicrostep %s: %ld", Axis == AXIS1 ? "AXIS1" : "AXIS2", ClockTicksPerMicrostep);
     std::string Parameters, Response;
 
     Long2BCDstr(ClockTicksPerMicrostep, Parameters);
@@ -739,7 +739,7 @@ void SkywatcherAPI::SlewTo(AXISID Axis, long OffsetInMicrosteps, bool verbose)
 bool SkywatcherAPI::SlowStop(AXISID Axis)
 {
     // Request a slow stop
-    //    MYDEBUG(DBG_SCOPE, "SlowStop");
+    MYDEBUGF(DBG_SCOPE, "SlowStop %s", Axis == AXIS1 ? "AXIS1" : "AXIS2");
     std::string Parameters, Response;
 
     return TalkWithAxis(Axis, 'K', Parameters, Response);
@@ -747,7 +747,7 @@ bool SkywatcherAPI::SlowStop(AXISID Axis)
 
 bool SkywatcherAPI::StartMotion(AXISID Axis)
 {
-    //    MYDEBUG(DBG_SCOPE, "StartMotion");
+    MYDEBUGF(DBG_SCOPE, "StartMotion %s", Axis == AXIS1 ? "AXIS1" : "AXIS2");
     std::string Parameters, Response;
 
     return TalkWithAxis(Axis, 'J', Parameters, Response);
@@ -755,8 +755,10 @@ bool SkywatcherAPI::StartMotion(AXISID Axis)
 
 bool SkywatcherAPI::TalkWithAxis(AXISID Axis, char Command, std::string &cmdDataStr, std::string &responseStr)
 {
-    //    MYDEBUGF(DBG_SCOPE, "TalkWithAxis Axis %s Command %c Data (%s)", Axis == AXIS1 ? "AXIS1" : "AXIS2", Command,
-    //             cmdDataStr.c_str());
+    struct timeval startTime, currentTime, resTime;
+    gettimeofday(&startTime, nullptr);
+    MYDEBUGF(DBG_SCOPE, "TalkWithAxis -> Axis %s Command %c Data (%s)", Axis == AXIS1 ? "AXIS1" : "AXIS2", Command,
+             cmdDataStr.c_str());
 
     std::string SendBuffer;
     int bytesWritten;
@@ -782,9 +784,16 @@ bool SkywatcherAPI::TalkWithAxis(AXISID Axis, char Command, std::string &cmdData
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
         response[0] = '\0';
-        rc = skywatcher_tty_read_section(MyPortFD, response, 0x0D, 10, &bytesRead);
-        if (rc != TTY_OK)
+        rc = skywatcher_tty_read_section(MyPortFD, response, 0x0D, 1, &bytesRead);
+        if (rc != TTY_OK) {
+            gettimeofday(&currentTime, nullptr);
+            timersub(&currentTime, &startTime, &resTime);
+            if (rc == TTY_TIME_OUT)
+                MYDEBUGF(INDI::Logger::DBG_WARNING,"TalkWithAxis {%0.3f s} FAILED: TIME OUT", resTime.tv_sec+resTime.tv_usec/1000000.0);
+            else
+                MYDEBUGF(INDI::Logger::DBG_WARNING,"TalkWithAxis {%0.3f s} FAILED: rc=%d", resTime.tv_sec+resTime.tv_usec/1000000.0, rc);
             return false;
+        }
         for (int i = 0; i < bytesRead && !EndReading; i++)
         {
             c = response[i];
@@ -805,8 +814,15 @@ bool SkywatcherAPI::TalkWithAxis(AXISID Axis, char Command, std::string &cmdData
             if (StartReading)
                 responseStr.push_back(c);
         }
+ #if 0
+        gettimeofday(&currentTime, nullptr);
+        timersub(&currentTime, &startTime, &resTime);
+        MYDEBUGF(DBG_SCOPE, "TalkWithAxis <- {%03.0f ms} SECTION %s Response (%s)", resTime.tv_sec*1000+resTime.tv_usec/1000.0, mount_response ? "Good" : "Bad", responseStr.c_str());
+ #endif
     }
-    //    MYDEBUGF(DBG_SCOPE, "TalkWithAxis - %s Response (%s)", mount_response ? "Good" : "Bad", responseStr.c_str());
+    gettimeofday(&currentTime, nullptr);
+    timersub(&currentTime, &startTime, &resTime);
+    MYDEBUGF(DBG_SCOPE, "TalkWithAxis <- {%0.3f s} %s Response (%s)", resTime.tv_sec+resTime.tv_usec/1000000.0, mount_response ? "Good" : "Bad", responseStr.c_str());
     return true;
 }
 

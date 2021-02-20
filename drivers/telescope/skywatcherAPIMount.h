@@ -170,6 +170,25 @@ class SkywatcherAPIMount : public SkywatcherAPI,
         INumber GuidingRatesN[2];
         INumberVectorProperty GuidingRatesNP;
 
+        // A switch for TrackingInhibit Enable
+        enum
+        {
+            TRACKINGINHIBIT_ENABLED,
+            TRACKINGINHIBIT_DISABLED
+        };
+        ISwitch TrackingInhibit[2];
+        ISwitchVectorProperty TrackingInhibitSP;
+
+        // Tracking rates and errors
+        INumber TrackingRatesN[2];
+        INumberVectorProperty TrackingRatesNP;
+        INumber TrackingSpeedN[2];
+        INumberVectorProperty TrackingSpeedNP;
+        INumber TrackingOffsetsN[2];
+        INumberVectorProperty TrackingOffsetsNP;
+        INumber TrackingErrorsN[2];
+        INumberVectorProperty TrackingErrorsNP;
+
         // A switch for park movement directions (clockwise/counterclockwise)
 //        ISwitch ParkMovementDirection[2];
 //        ISwitchVectorProperty ParkMovementDirectionSP;
