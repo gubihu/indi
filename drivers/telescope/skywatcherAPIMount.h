@@ -189,6 +189,15 @@ class SkywatcherAPIMount : public SkywatcherAPI,
         INumber TrackingErrorsN[2];
         INumberVectorProperty TrackingErrorsNP;
 
+        INumber TrackingPvalN;
+        INumberVectorProperty TrackingPvalNP;
+        INumber TrackingIvalN;
+        INumberVectorProperty TrackingIvalNP;
+
+        // Horizontal Coords
+        INumber HorizontalCoordsN[2];
+        INumberVectorProperty HorizontalCoordsNP;
+
         // A switch for park movement directions (clockwise/counterclockwise)
 //        ISwitch ParkMovementDirection[2];
 //        ISwitchVectorProperty ParkMovementDirectionSP;
@@ -216,6 +225,10 @@ class SkywatcherAPIMount : public SkywatcherAPI,
         int TrackingMsecs { 0 };
         double GuideDeltaAlt { 0 };
         double GuideDeltaAz { 0 };
+        double AzimuthSpeed  { 0.0 };
+        double AltitudeSpeed { 0.0 };
+        double AzimuthIntegrator { 0.0 };
+        double AltitudeIntegrator { 0.0 };
 
         /// Save the serial port name
         std::string SerialPortName;

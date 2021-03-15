@@ -479,6 +479,23 @@ bool SkywatcherAPIMount::initProperties()
     IUFillNumberVector(&TrackingErrorsNP, TrackingErrorsN, 2, getDeviceName(), "TRACKING_ERRORS", "Tracking Errors", MOTION_TAB,
                        IP_RO, 60, IPS_IDLE);
 
+    IUFillNumber(&TrackingPvalN, "TRACKING_P_VAL", "Proportional coef", "%1.3f", 0.0, 1.0, 0.0001, 0.5);
+    IUFillNumberVector(&TrackingPvalNP, &TrackingPvalN, 1, getDeviceName(), "TRACKING_P", "Tracking Prop", MOTION_TAB, IP_RW, 60,
+                       IPS_IDLE);
+    IUFillNumber(&TrackingIvalN, "TRACKING_I_VAL", "Integral coef", "%1.3f", 0.0, 1.0, 0.0001, 0.01);
+    IUFillNumberVector(&TrackingIvalNP, &TrackingIvalN, 1, getDeviceName(), "TRACKING_I", "Tracking Integ", MOTION_TAB, IP_RW, 60,
+                       IPS_IDLE);
+
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    /// Horizontal Coords
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    IUFillNumber(&HorizontalCoordsN[AXIS_AZ], "AZ", "Az D:M:S", "%10.6m", 0.0, 360.0, 0.0, 0);
+    IUFillNumber(&HorizontalCoordsN[AXIS_ALT], "ALT", "Alt  D:M:S", "%10.6m", -90., 90.0, 0.0, 0);
+    IUFillNumberVector(&HorizontalCoordsNP, HorizontalCoordsN, 2, getDeviceName(), "HORIZONTAL_COORD",
+                       "Horizontal Coord", MAIN_CONTROL_TAB, IP_RW, 0, IPS_IDLE);
+
+
     tcpConnection->setDefaultHost("192.168.4.1");
     tcpConnection->setDefaultPort(11880);
     tcpConnection->setConnectionType(Connection::TCP::TYPE_UDP);
@@ -522,6 +539,8 @@ void SkywatcherAPIMount::ISGetProperties(const char *dev)
         defineNumber(&TrackingRatesNP);
         defineNumber(&TrackingOffsetsNP);
         defineNumber(&TrackingErrorsNP);
+        defineNumber(&TrackingPvalNP);
+        defineNumber(&TrackingIvalNP);
         //        defineSwitch(&ParkMovementDirectionSP);
         //        defineSwitch(&ParkPositionSP);
         //        defineSwitch(&UnparkPositionSP);
@@ -578,6 +597,21 @@ bool SkywatcherAPIMount::ISNewNumber(const char *dev, const char *name, double v
             TrackingSpeedNP.s = IPS_OK;
             IUUpdateNumber(&TrackingSpeedNP, values, names, n);
             IDSetNumber(&TrackingSpeedNP, nullptr);
+            return true;
+        }
+
+        if (strcmp(name, "TRACKING_P") == 0)
+        {
+            TrackingPvalNP.s = IPS_OK;
+            IUUpdateNumber(&TrackingPvalNP, values, names, n);
+            IDSetNumber(&TrackingPvalNP, nullptr);
+            return true;
+        }
+        if (strcmp(name, "TRACKING_I") == 0)
+        {
+            TrackingIvalNP.s = IPS_OK;
+            IUUpdateNumber(&TrackingIvalNP, values, names, n);
+            IDSetNumber(&TrackingIvalNP, nullptr);
             return true;
         }
 
@@ -1431,9 +1465,9 @@ void SkywatcherAPIMount::TimerHit()
                 GuideDeltaAz += DeltaAz;
 
                 long AltitudeOffsetMicrosteps =
-                    DegreesToMicrosteps(AXIS2, AltAz.alt + GuideDeltaAlt) + ZeroPositionEncoders[AXIS2] - CurrentEncoders[AXIS2];
+                    DegreesToMicrosteps(AXIS2, AltAz.alt + 0*GuideDeltaAlt) + ZeroPositionEncoders[AXIS2] - CurrentEncoders[AXIS2];
                 long AzimuthOffsetMicrosteps =
-                    DegreesToMicrosteps(AXIS1, AltAz.az + GuideDeltaAz) + ZeroPositionEncoders[AXIS1] - CurrentEncoders[AXIS1];
+                    DegreesToMicrosteps(AXIS1, AltAz.az + 0*GuideDeltaAz) + ZeroPositionEncoders[AXIS1] - CurrentEncoders[AXIS1];
 
                 if (AzimuthOffsetMicrosteps > MicrostepsPerRevolution[AXIS1] / 2)
                 {
@@ -1451,7 +1485,29 @@ void SkywatcherAPIMount::TimerHit()
                 DEBUGF(DBG_SCOPE, "New Tracking Target AltitudeOffset %ld microsteps AzimuthOffset %ld microsteps",
                        AltitudeOffsetMicrosteps, AzimuthOffsetMicrosteps);
 //long AzimuthRate, AltitudeRate ;
-double AzimuthSpeed, AltitudeSpeed = 0.0;
+
+                long AzErrorMicrosteps = OldTrackingTarget[AXIS1] - CurrentEncoders[AXIS1];
+                long AltErrorMicrosteps = OldTrackingTarget[AXIS2] - CurrentEncoders[AXIS2];
+                DEBUGF(DBG_SCOPE, "Tracking - AXIS1 error %d AXIS2 error %d",
+                       AzErrorMicrosteps,
+                       AltErrorMicrosteps);
+                TrackingErrorsN[0].value = AzErrorMicrosteps;
+                TrackingErrorsN[1].value = AltErrorMicrosteps;
+                IDSetNumber(&TrackingErrorsNP, nullptr);
+
+
+double p_gain = 0.2;
+double i_gain = 0.0;
+if (IUFindNumber(&TrackingPvalNP, "TRACKING_P_VAL") != nullptr)
+{
+    p_gain = IUFindNumber(&TrackingPvalNP, "TRACKING_P_VAL")->value;
+    DEBUGF(DBG_SCOPE, "Tracking P gain: %1.3f", p_gain);
+}
+if (IUFindNumber(&TrackingIvalNP, "TRACKING_I_VAL") != nullptr)
+{
+    i_gain = IUFindNumber(&TrackingIvalNP, "TRACKING_I_VAL")->value;
+    DEBUGF(DBG_SCOPE, "Tracking I gain: %1.3f", i_gain);
+}
 if (IUFindSwitch(&TrackingInhibitSP, "TRACKINGINHIBIT_ENABLED") != nullptr &&
                         IUFindSwitch(&TrackingInhibitSP, "TRACKINGINHIBIT_ENABLED")->s == ISS_ON)
 {
@@ -1464,8 +1520,16 @@ if (IUFindSwitch(&TrackingInhibitSP, "TRACKINGINHIBIT_ENABLED") != nullptr &&
 }
 else
 {
-    AzimuthSpeed = AzimuthOffsetMicrosteps;
-    AltitudeSpeed = AltitudeOffsetMicrosteps;
+    AzimuthIntegrator = (AzimuthIntegrator + AzimuthOffsetMicrosteps);
+    AltitudeIntegrator = (AltitudeIntegrator + AltitudeOffsetMicrosteps);
+//    AzimuthSpeed = ((1-p) * AzimuthSpeed + p * AzErrorMicrosteps) + GuideDeltaAz * MicrostepsPerDegree[AXIS1];
+//    AltitudeSpeed = ((1-p) * AltitudeSpeed + p * AltErrorMicrosteps) + GuideDeltaAlt * MicrostepsPerDegree[AXIS2];
+//    AzimuthSpeed = ((1-p) * AzimuthSpeed + p * AzimuthOffsetMicrosteps) + GuideDeltaAz * MicrostepsPerDegree[AXIS1];
+//    AltitudeSpeed = ((1-p) * AltitudeSpeed + p * AltitudeOffsetMicrosteps) + GuideDeltaAlt * MicrostepsPerDegree[AXIS2];
+    AzimuthSpeed = (i_gain * AzimuthIntegrator + p_gain * AzimuthOffsetMicrosteps) + GuideDeltaAz * MicrostepsPerDegree[AXIS1];
+    AltitudeSpeed = (i_gain * AltitudeIntegrator + p_gain * AltitudeOffsetMicrosteps) + GuideDeltaAlt * MicrostepsPerDegree[AXIS2];
+    AzimuthOffsetMicrosteps += DegreesToMicrosteps(AXIS1, GuideDeltaAz);
+    AltitudeOffsetMicrosteps += DegreesToMicrosteps(AXIS2, GuideDeltaAlt);
     TrackingSpeedN[0].value = AzimuthSpeed;
     TrackingSpeedN[1].value = AltitudeSpeed;
     IDSetNumber(&TrackingSpeedNP, nullptr);
@@ -1566,15 +1630,6 @@ else
                 TrackingOffsetsN[1].value = AltitudeOffsetMicrosteps;
                 IDSetNumber(&TrackingOffsetsNP, nullptr);
 
-                long AzErrorMicrosteps = OldTrackingTarget[AXIS1] - CurrentEncoders[AXIS1];
-                long AltErrorMicrosteps = OldTrackingTarget[AXIS2] - CurrentEncoders[AXIS2];
-                DEBUGF(DBG_SCOPE, "Tracking - AXIS1 error %d AXIS2 error %d",
-                       AzErrorMicrosteps,
-                       AltErrorMicrosteps);
-                TrackingErrorsN[0].value = AzErrorMicrosteps;
-                TrackingErrorsN[1].value = AltErrorMicrosteps;
-                IDSetNumber(&TrackingErrorsNP, nullptr);
-
                 OldTrackingTarget[AXIS1] = AzimuthOffsetMicrosteps + CurrentEncoders[AXIS1];
                 OldTrackingTarget[AXIS2] = AltitudeOffsetMicrosteps + CurrentEncoders[AXIS2];
             }
@@ -1640,6 +1695,8 @@ bool SkywatcherAPIMount::updateProperties()
         defineNumber(&TrackingRatesNP);
         defineNumber(&TrackingOffsetsNP);
         defineNumber(&TrackingErrorsNP);
+        defineNumber(&TrackingPvalNP);
+        defineNumber(&TrackingIvalNP);
         //        defineSwitch(&ParkMovementDirectionSP);
         //        defineSwitch(&ParkPositionSP);
         //        defineSwitch(&UnparkPositionSP);
@@ -1694,6 +1751,8 @@ bool SkywatcherAPIMount::updateProperties()
         deleteProperty(TrackingSpeedNP.name);
         deleteProperty(TrackingOffsetsNP.name);
         deleteProperty(TrackingErrorsNP.name);
+        deleteProperty(TrackingPvalNP.name);
+        deleteProperty(TrackingIvalNP.name);
         //        deleteProperty(ParkMovementDirectionSP.name);
         //        deleteProperty(ParkPositionSP.name);
         //        deleteProperty(UnparkPositionSP.name);
